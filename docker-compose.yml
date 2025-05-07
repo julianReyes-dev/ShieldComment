@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: shieldcomment_api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - rabbitmq
+    networks:
+      - shieldnet
+
+  db:
+    image: postgres:13-alpine
+    container_name: shieldcomment_db
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - shieldnet
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: shieldcomment_rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "5672:5672"  # Puerto AMQP
+      - "15672:15672"  # Interfaz web de gestión
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - shieldnet
+
+  analysis_worker:
+    build: .
+    container_name: shieldcomment_analysis_worker
+    restart: unless-stopped
+    env_file: .env
+    command: python -m app.workers.analysis_worker
+    depends_on:
+      - db
+      - rabbitmq
+    networks:
+      - shieldnet
+
+  block_worker:
+    build: .
+    container_name: shieldcomment_block_worker
+    restart: unless-stopped
+    env_file: .env
+    command: python -m app.workers.block_worker
+    depends_on:
+      - db
+      - rabbitmq
+    networks:
+      - shieldnet
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+
+networks:
+  shieldnet:
+    driver: bridge

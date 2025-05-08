@@ -43,7 +43,7 @@ services:
     container_name: shieldcomment_analysis_worker
     restart: unless-stopped
     env_file: .env
-    command: python -m app.workers.analysis_worker
+    command: ["sh", "-c", "while ! nc -z rabbitmq 5672; do echo 'Waiting for RabbitMQ...'; sleep 2; done; python -m app.workers.analysis_worker"]
     depends_on:
       - db
       - rabbitmq
@@ -55,7 +55,7 @@ services:
     container_name: shieldcomment_block_worker
     restart: unless-stopped
     env_file: .env
-    command: python -m app.workers.block_worker
+    command: ["sh", "-c", "while ! nc -z rabbitmq 5672; do echo 'Waiting for RabbitMQ...'; sleep 2; done; python -m app.workers.block_worker"]
     depends_on:
       - db
       - rabbitmq
@@ -69,3 +69,4 @@ volumes:
 networks:
   shieldnet:
     driver: bridge
+

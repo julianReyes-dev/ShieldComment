@@ -1,3 +1,4 @@
+from app.utils.queues import USER_BLOCK_QUEUE
 import asyncio
 import json
 from datetime import datetime, timedelta
@@ -35,7 +36,15 @@ async def main():
         channel = await connection.channel()
         await channel.set_qos(prefetch_count=1)
         
-        queue = await channel.declare_queue("userBlockQueue", durable=True)
+        queue = await channel.declare_queue(
+            USER_BLOCK_QUEUE,
+            durable=True,
+            arguments={
+                'x-message-ttl': 86400000,
+                'x-max-length': 10000,
+                'x-dead-letter-exchange': 'dlx'
+            }
+)
         
         async with queue.iterator() as queue_iter:
             async for message in queue_iter:

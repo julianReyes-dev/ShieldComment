@@ -1,12 +1,17 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine, Base
 from app.api.v1.endpoints import comments, users
 
-# Crea la instancia de FastAPI
-app = FastAPI(title="ShieldComment API", version="1.0.0")
+app = FastAPI(
+    title="ShieldComment API",
+    version="1.0.0",
+    description="API for toxic comment detection and moderation",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc"
+)
 
-# Configuración de CORS (si es necesaria)
-from fastapi.middleware.cors import CORSMiddleware
+# CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,12 +20,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Incluye los routers
-app.include_router(comments.router, prefix="/api/v1/comments", tags=["comments"])
-app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
+# Include routers with proper prefixes
+app.include_router(
+    comments.router,
+    prefix="/api/v1/comments",
+    tags=["comments"]
+)
+app.include_router(
+    users.router,
+    prefix="/api/v1/users",
+    tags=["users"]
+)
 
-# Crea tablas de la base de datos al iniciar
 @app.on_event("startup")
 async def startup():
+    # Create database tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    print("Database tables created (if not exists)")
+
+@app.get("/api/health", tags=["health"])
+async def health_check():
+    return {"status": "healthy"}

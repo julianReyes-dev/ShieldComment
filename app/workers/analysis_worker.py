@@ -1,44 +1,19 @@
+from app.utils.queues import COMMENT_ANALYSIS_QUEUE, USER_BLOCK_QUEUE
 import asyncio
 import json
+import logging
 from aio_pika import Message, connect
 from aio_pika.abc import AbstractIncomingMessage
 from sqlalchemy import select
-from ..database import AsyncSessionLocal
-from ..models import CommentAnalysis, User
-from ..utils.config import settings
-from ..rabbitmq import get_connection
 
-# Análisis simulado
-async def analyze_toxicity(comment_text: str) -> dict:
-    toxic_words = ["idiota", "estúpido", "imbécil"]
-    toxic_count = sum(1 for word in toxic_words if word in comment_text.lower())
-    toxicity_score = min(100, toxic_count * 30)
+from app.database import AsyncSessionLocal
+from app.models import CommentAnalysis, User
+from app.utils.config import settings
+from app.utils.toxicity_analyzer import analyze_toxicity
+from app.rabbitmq import publish_message
 
-    if toxicity_score > 70:
-        classification = "toxic"
-    elif toxicity_score > 30:
-        classification = "potentially-toxic"
-    else:
-        classification = "non-toxic"
-
-    return {
-        "toxicity_score": toxicity_score,
-        "classification": classification,
-        "details": {
-            "toxic_words_found": toxic_count,
-            "model_version": "mock-v1"
-        }
-    }
-
-async def publish_message(queue_name: str, message: str):
-    connection = await get_connection()
-    channel = await connection.channel()
-    await channel.declare_queue(queue_name, durable=True)
-    await channel.default_exchange.publish(
-        Message(body=message.encode()),
-        routing_key=queue_name,
-    )
-    await channel.close()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 async def process_comment_analysis(message: AbstractIncomingMessage):
     async with message.process():
@@ -48,10 +23,13 @@ async def process_comment_analysis(message: AbstractIncomingMessage):
             user_id = data["user_id"]
             text = data["text"]
 
+            logger.info(f"Processing comment analysis for comment ID: {comment_id}")
+
+            # Perform toxicity analysis
             analysis_result = await analyze_toxicity(text)
 
             async with AsyncSessionLocal() as db:
-                # Guardar análisis
+                # Save analysis
                 analysis = CommentAnalysis(
                     comment_id=comment_id,
                     toxicity_score=analysis_result["toxicity_score"],
@@ -60,40 +38,57 @@ async def process_comment_analysis(message: AbstractIncomingMessage):
                 )
                 db.add(analysis)
 
-                # Cargar y actualizar usuario
+                # Update user offense count if comment is toxic
                 user = await db.get(User, user_id)
-                if user:
-                    if analysis_result["classification"] in ["potentially-toxic", "toxic"]:
-                        user.offense_count += 1
-                        db.add(user)
+                if user and analysis_result["classification"] in ["potentially-toxic", "toxic"]:
+                    user.offense_count += 1
+                    db.add(user)
 
-                    await db.commit()  # commit para reflejar cambios antes del siguiente get
+                await db.commit()
 
-                    # Verificar si debe bloquearse
-                    if user.offense_count >= 2 and not user.is_blocked:
-                        block_message = {
-                            "user_id": user.id,
-                            "offense_count": user.offense_count,
-                            "block_duration": 600  # 10 minutos
-                        }
-                        await publish_message("userBlockQueue", json.dumps(block_message))
+                # Check if user should be blocked
+                if user and user.offense_count >= 2 and not user.is_blocked:
+                    block_message = {
+                        "user_id": user.id,
+                        "offense_count": user.offense_count,
+                        "block_duration": 600  # 10 minutes
+                    }
+                    await publish_message("user_block_queue", json.dumps(block_message))
 
         except Exception as e:
-            print(f"Error processing message: {e}")
+            logger.error(f"Error processing message: {e}")
+            # Optionally: implement retry logic or dead letter queue
 
 async def main():
-    connection = await connect(
-        f"amqp://{settings.RABBITMQ_USER}:{settings.RABBITMQ_PASSWORD}@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/"
-    )
-
-    async with connection:
-        channel = await connection.channel()
-        await channel.set_qos(prefetch_count=1)
-        queue = await channel.declare_queue("commentAnalysisQueue", durable=True)
-
-        async with queue.iterator() as queue_iter:
-            async for message in queue_iter:
-                await process_comment_analysis(message)
+    while True:
+        try:
+            connection = await connect(
+                f"amqp://{settings.RABBITMQ_USER}:{settings.RABBITMQ_PASSWORD}@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/",
+                timeout=10
+            )
+            
+            async with connection:
+                channel = await connection.channel()
+                await channel.set_qos(prefetch_count=1)
+                
+                queue = await channel.declare_queue(
+                    COMMENT_ANALYSIS_QUEUE,
+                    durable=True,
+                    arguments={
+                        'x-message-ttl': 86400000,  # 24h en ms
+                        'x-max-length': 10000,
+                        'x-dead-letter-exchange': 'dlx'  # Opcional para manejo de errores
+                    }
+)
+                
+                logger.info("Waiting for messages. To exit press CTRL+C")
+                async with queue.iterator() as queue_iter:
+                    async for message in queue_iter:
+                        await process_comment_analysis(message)
+                        
+        except Exception as e:
+            logger.error(f"Connection error: {e}, retrying in 5 seconds...")
+            await asyncio.sleep(5)
 
 if __name__ == "__main__":
     asyncio.run(main())

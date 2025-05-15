@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ShieldComment - Moderación</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .comment { border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; }
+        .toxic { background-color: #ffdddd; }
+        .potentially-toxic { background-color: #fff3cd; }
+        .non-toxic { background-color: #d4edda; }
+        .chart-container { width: 80%; margin: 20px auto; }
+    </style>
+</head>
+<body>
+    <h1>ShieldComment - Panel de Moderación</h1>
+    
+    <div class="chart-container">
+        <canvas id="toxicityChart"></canvas>
+    </div>
+    
+    <h2>Últimos Comentarios Analizados</h2>
+    <div id="comments-container"></div>
+    
+    <script>
+        async function loadComments() {
+            const response = await fetch('/api/v1/comments/recent');
+            const comments = await response.json();
+            
+            const container = document.getElementById('comments-container');
+            container.innerHTML = '';
+            
+            comments.forEach(comment => {
+                const div = document.createElement('div');
+                div.className = `comment ${comment.analysis.classification.replace(' ', '-')}`;
+                
+                div.innerHTML = `
+                    <p><strong>Usuario:</strong> ${comment.user.username} (ID: ${comment.user.id})</p>
+                    <p><strong>Comentario:</strong> ${comment.text}</p>
+                    <p><strong>Clasificación:</strong> ${comment.analysis.classification} (${comment.analysis.toxicity_score}%)</p>
+                    <p><small>Analizado el: ${new Date(comment.analysis.analyzed_at).toLocaleString()}</small></p>
+                `;
+                
+                container.appendChild(div);
+            });
+        }
+        
+        async function loadStats() {
+            const response = await fetch('/api/v1/comments/stats');
+            const stats = await response.json();
+            
+            const ctx = document.getElementById('toxicityChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: ['No tóxicos', 'Potencialmente tóxicos', 'Tóxicos'],
+                    datasets: [{
+                        data: [
+                            stats.non_toxic, 
+                            stats.potentially_toxic, 
+                            stats.toxic
+                        ],
+                        backgroundColor: [
+                            '#d4edda',
+                            '#fff3cd',
+                            '#ffdddd'
+                        ]
+                    }]
+                }
+            });
+        }
+        
+        // Cargar datos iniciales
+        loadComments();
+        loadStats();
+        
+        // Actualizar cada 30 segundos
+        setInterval(() => {
+            loadComments();
+            loadStats();
+        }, 30000);
+    </script>
+</body>
+</html>

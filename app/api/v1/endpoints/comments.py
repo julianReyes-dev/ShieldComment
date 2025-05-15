@@ -1,9 +1,13 @@
 from app.utils.queues import COMMENT_ANALYSIS_QUEUE
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 from typing import List
 from datetime import datetime
 import json
+import os
 
 from app.database import get_db
 from app.models import Comment, CommentAnalysis, User
@@ -17,6 +21,59 @@ from app.rabbitmq import publish_message
 from app.utils.toxicity_analyzer import analyze_toxicity
 
 router = APIRouter()
+
+# Configurar templates
+templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "../../../templates"))
+
+@router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+async def get_dashboard():
+    return templates.TemplateResponse("index.html", {"request": {}})
+
+@router.get("/recent", summary="Get recent analyzed comments")
+async def get_recent_comments(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Comment, CommentAnalysis, User)
+        .join(CommentAnalysis, Comment.id == CommentAnalysis.comment_id)
+        .join(User, Comment.user_id == User.id)
+        .order_by(CommentAnalysis.analyzed_at.desc())
+        .limit(20)
+    )
+    
+    comments = []
+    for comment, analysis, user in result:
+        comments.append({
+            "id": comment.id,
+            "text": comment.text,
+            "created_at": comment.created_at,
+            "user": {
+                "id": user.id,
+                "username": user.username
+            },
+            "analysis": {
+                "toxicity_score": analysis.toxicity_score,
+                "classification": analysis.classification,
+                "analyzed_at": analysis.analyzed_at
+            }
+        })
+    
+    return comments
+
+@router.get("/stats", summary="Get toxicity statistics")
+async def get_toxicity_stats(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(
+            func.sum(func.case((CommentAnalysis.classification == "non-toxic", 1), else_=0)).label("non_toxic"),
+            func.sum(func.case((CommentAnalysis.classification == "potentially-toxic", 1), else_=0)).label("potentially_toxic"),
+            func.sum(func.case((CommentAnalysis.classification == "toxic", 1), else_=0)).label("toxic")
+        )
+    )
+    
+    stats = result.first()
+    return {
+        "non_toxic": stats.non_toxic or 0,
+        "potentially_toxic": stats.potentially_toxic or 0,
+        "toxic": stats.toxic or 0
+    }
 
 @router.post(
     "/",

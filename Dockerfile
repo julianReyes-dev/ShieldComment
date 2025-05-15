@@ -1,22 +1,21 @@
-# Usamos python:3.9-alpine para tener una imagen más ligera
-FROM python:3.9-alpine
+FROM python:3.9-slim
 
-# Establecer el directorio de trabajo
 WORKDIR /app
-
-# Establecer PYTHONPATH
 ENV PYTHONPATH=/app
 
-# Instalar nc (netcat) para poder usarlo en los scripts
-RUN apk add --no-cache netcat-openbsd
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    netcat-openbsd \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copiar el archivo requirements.txt y luego instalar las dependencias
+# Instalar torch primero (optimización para caché de Docker)
+RUN pip install torch --no-cache-dir
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar el resto de la aplicación
 COPY . .
 
-# Comando para ejecutar el servidor con Uvicorn
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-

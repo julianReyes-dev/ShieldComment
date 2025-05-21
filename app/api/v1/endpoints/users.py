@@ -1,4 +1,5 @@
-from sqlalchemy import select
+from sqlalchemy import select, and_
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import User
@@ -35,3 +36,45 @@ async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(db_user)
     return db_user
+
+@router.get("/blocked", summary="Get currently blocked users")
+async def get_blocked_users(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(User)
+        .where(and_(
+            User.is_blocked == True,
+            User.blocked_until > datetime.utcnow()
+        ))
+        .order_by(User.blocked_until.desc())
+    )
+    
+    users = result.scalars().all()
+    return [
+        {
+            "id": user.id,
+            "username": user.username,
+            "offense_count": user.offense_count,
+            "blocked_until": user.blocked_until
+        }
+        for user in users
+    ]
+
+@router.get("/blocked", summary="Get currently blocked users")
+async def get_blocked_users(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(User)
+        .where(User.is_blocked == True)
+        .where(User.blocked_until > datetime.utcnow())
+        .order_by(User.blocked_until.desc())
+    )
+    
+    users = result.scalars().all()
+    return [
+        {
+            "id": user.id,
+            "username": user.username,
+            "offense_count": user.offense_count,
+            "blocked_until": user.blocked_until
+        }
+        for user in users
+    ]

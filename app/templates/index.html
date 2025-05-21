@@ -3,99 +3,290 @@
 <head>
     <title>ShieldComment - Moderación</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .comment { border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; }
-        .toxic { background-color: #ffdddd; }
-        .potentially-toxic { background-color: #fff3cd; }
-        .non-toxic { background-color: #d4edda; }
+        body { font-family: Arial, sans-serif; margin: 20px; max-width: 1200px; margin: 0 auto; }
+        .section { margin-bottom: 30px; border-bottom: 1px solid #eee; padding-bottom: 20px; }
+        .comment { border: 1px solid #ddd; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
+        .toxic { background-color: #ffebee; border-left: 4px solid #f44336; }
+        .potentially-toxic { background-color: #fff8e1; border-left: 4px solid #ffc107; }
+        .non-toxic { background-color: #e8f5e9; border-left: 4px solid #4caf50; }
         .chart-container { width: 80%; margin: 20px auto; }
-        .blocked { color: red; font-weight: bold; }
+        .blocked-user { background-color: #ffebee; padding: 10px; margin: 5px 0; border-radius: 4px; }
+        .tab { overflow: hidden; border: 1px solid #ccc; background-color: #f1f1f1; }
+        .tab button { background-color: inherit; float: left; border: none; outline: none; cursor: pointer; padding: 10px 16px; transition: 0.3s; }
+        .tab button:hover { background-color: #ddd; }
+        .tab button.active { background-color: #4CAF50; color: white; }
+        .tabcontent { display: none; padding: 15px; border: 1px solid #ccc; border-top: none; }
+        .stats-container { display: flex; justify-content: space-around; margin: 20px 0; }
+        .stat-box { text-align: center; padding: 15px; border-radius: 5px; width: 30%; }
+        .non-toxic-stat { background-color: #e8f5e9; }
+        .potentially-toxic-stat { background-color: #fff8e1; }
+        .toxic-stat { background-color: #ffebee; }
+        .timestamp { color: #666; font-size: 0.9em; }
+        .blocked { color: #d32f2f; font-weight: bold; }
+        .user-info { font-weight: bold; margin-bottom: 5px; }
+        .comment-text { margin: 10px 0; }
+        .classification { display: inline-block; padding: 3px 8px; border-radius: 3px; color: white; }
+        .classification-toxic { background-color: #f44336; }
+        .classification-potentially-toxic { background-color: #ff9800; }
+        .classification-non-toxic { background-color: #4caf50; }
+        h2 { color: #333; }
+        .refresh-btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        .refresh-btn:hover {
+            background-color: #45a049;
+        }
     </style>
 </head>
 <body>
     <h1>ShieldComment - Panel de Moderación</h1>
-
-    <div class="chart-container">
-        <canvas id="toxicityChart"></canvas>
+    
+    <div class="tab">
+        <button class="tablinks active" onclick="openTab(event, 'dashboard')">Dashboard</button>
+        <button class="tablinks" onclick="openTab(event, 'all-comments')">Todos los Comentarios</button>
+        <button class="tablinks" onclick="openTab(event, 'blocked-users')">Usuarios Bloqueados</button>
     </div>
-
-    <h2>Últimos Comentarios Analizados</h2>
-    <div id="comments-container"></div>
-
+    
+    <!-- Dashboard Tab -->
+    <div id="dashboard" class="tabcontent" style="display: block;">
+        <div class="section">
+            <h2>Estadísticas de Toxicidad</h2>
+            <div class="stats-container">
+                <div class="stat-box non-toxic-stat">
+                    <h3>No Tóxicos</h3>
+                    <p id="non-toxic-count">0</p>
+                </div>
+                <div class="stat-box potentially-toxic-stat">
+                    <h3>Potencialmente Tóxicos</h3>
+                    <p id="potentially-toxic-count">0</p>
+                </div>
+                <div class="stat-box toxic-stat">
+                    <h3>Tóxicos</h3>
+                    <p id="toxic-count">0</p>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="toxicityChart"></canvas>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Últimos Comentarios Analizados</h2>
+            <button class="refresh-btn" onclick="loadRecentComments()">Actualizar</button>
+            <div id="recent-comments-container"></div>
+        </div>
+    </div>
+    
+    <!-- All Comments Tab -->
+    <div id="all-comments" class="tabcontent">
+        <h2>Todos los Comentarios</h2>
+        <button class="refresh-btn" onclick="loadAllComments()">Actualizar</button>
+        <div id="all-comments-container"></div>
+    </div>
+    
+    <!-- Blocked Users Tab -->
+    <div id="blocked-users" class="tabcontent">
+        <h2>Usuarios Actualmente Bloqueados</h2>
+        <button class="refresh-btn" onclick="loadBlockedUsers()">Actualizar</button>
+        <div id="blocked-users-container"></div>
+    </div>
+    
     <script>
-    async function loadComments() {
-        const response = await fetch('/api/v1/comments/recent');
-        const comments = await response.json();
-
-        const container = document.getElementById('comments-container');
-        container.innerHTML = '';
-
-        for (const comment of comments) {
+        // Funciones para manejar las pestañas
+        function openTab(evt, tabName) {
+            const tabcontents = document.getElementsByClassName("tabcontent");
+            for (let i = 0; i < tabcontents.length; i++) {
+                tabcontents[i].style.display = "none";
+            }
+            
+            const tablinks = document.getElementsByClassName("tablinks");
+            for (let i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            
+            document.getElementById(tabName).style.display = "block";
+            evt.currentTarget.className += " active";
+        }
+        
+        // Función para formatear la duración del bloqueo
+        function formatBlockTime(until) {
+            if (!until) return "";
+            const now = new Date();
+            const unblockTime = new Date(until);
+            const diffMs = unblockTime - now;
+            
+            if (diffMs <= 0) return "Bloqueo expirado";
+            
+            const diffMins = Math.round(diffMs / 60000);
+            const diffHours = Math.floor(diffMins / 60);
+            const remainingMins = diffMins % 60;
+            
+            return `Bloqueado por ${diffHours}h ${remainingMins}m (hasta ${unblockTime.toLocaleString()})`;
+        }
+        
+        // Función para renderizar un comentario
+        function renderComment(comment, containerId) {
+            const container = document.getElementById(containerId);
             const div = document.createElement('div');
             div.className = `comment ${comment.analysis.classification.replace(' ', '-')}`;
-
-            // Obtener estado del usuario
+            
             let blockedInfo = '';
-            try {
-                const userStatusResp = await fetch(`/api/v1/comments/${comment.id}/user-status`);
-                const statusData = await userStatusResp.json();
-
-                if (statusData.is_blocked) {
-                    const until = new Date(statusData.blocked_until).toLocaleString();
-                    blockedInfo = `<p class="blocked">⚠ Usuario bloqueado hasta: ${until}</p>`;
-                }
-            } catch (err) {
-                console.error("Error al obtener estado del usuario:", err);
+            if (comment.user_status && comment.user_status.is_blocked) {
+                blockedInfo = `<p class="blocked">⚠ Usuario bloqueado: ${formatBlockTime(comment.user_status.blocked_until)}</p>`;
             }
-
+            
+            const classificationClass = `classification-${comment.analysis.classification.replace(' ', '-')}`;
+            
             div.innerHTML = `
-                <p><strong>Usuario:</strong> ${comment.user.username} (ID: ${comment.user.id})</p>
+                <div class="user-info">
+                    <strong>Usuario:</strong> ${comment.user.username} (ID: ${comment.user.id}) 
+                    <span class="timestamp">${new Date(comment.created_at).toLocaleString()}</span>
+                </div>
                 ${blockedInfo}
-                <p><strong>Comentario:</strong> ${comment.text}</p>
-                <p><strong>Clasificación:</strong> ${comment.analysis.classification} (${comment.analysis.toxicity_score}%)</p>
-                <p><small>Analizado el: ${new Date(comment.analysis.analyzed_at).toLocaleString()}</small></p>
+                <div class="comment-text">${comment.text}</div>
+                <div>
+                    <span class="classification ${classificationClass}">
+                        ${comment.analysis.classification} (${comment.analysis.toxicity_score}%)
+                    </span>
+                    <span class="timestamp">Analizado: ${new Date(comment.analysis.analyzed_at).toLocaleString()}</span>
+                </div>
             `;
-
+            
             container.appendChild(div);
         }
-    }
-
-    async function loadStats() {
-        const response = await fetch('/api/v1/comments/stats');
-        const stats = await response.json();
-
-        const ctx = document.getElementById('toxicityChart').getContext('2d');
-        new Chart(ctx, {
-            type: 'pie',
-            data: {
-                labels: ['No tóxicos', 'Potencialmente tóxicos', 'Tóxicos'],
-                datasets: [{
-                    data: [
-                        stats.non_toxic,
-                        stats.potentially_toxic,
-                        stats.toxic
-                    ],
-                    backgroundColor: [
-                        '#d4edda',
-                        '#fff3cd',
-                        '#ffdddd'
-                    ]
-                }]
+        
+        // Cargar comentarios recientes
+        async function loadRecentComments() {
+            try {
+                const response = await axios.get('/api/v1/comments/recent');
+                const container = document.getElementById('recent-comments-container');
+                container.innerHTML = '';
+                
+                for (const comment of response.data) {
+                    const userStatus = await getUserStatus(comment.id);
+                    renderComment({...comment, user_status: userStatus}, 'recent-comments-container');
+                }
+            } catch (error) {
+                console.error("Error loading recent comments:", error);
             }
+        }
+        
+        // Cargar todos los comentarios
+        async function loadAllComments() {
+            try {
+                const response = await axios.get('/api/v1/comments/all');
+                const container = document.getElementById('all-comments-container');
+                container.innerHTML = '';
+                
+                for (const comment of response.data) {
+                    const userStatus = await getUserStatus(comment.id);
+                    renderComment({...comment, user_status: userStatus}, 'all-comments-container');
+                }
+            } catch (error) {
+                console.error("Error loading all comments:", error);
+            }
+        }
+        
+        // Cargar usuarios bloqueados
+        async function loadBlockedUsers() {
+            try {
+                const response = await axios.get('/api/v1/users/blocked');
+                const container = document.getElementById('blocked-users-container');
+                container.innerHTML = '';
+                
+                for (const user of response.data) {
+                    const div = document.createElement('div');
+                    div.className = 'blocked-user';
+                    
+                    const unblockTime = new Date(user.blocked_until);
+                    const now = new Date();
+                    const remainingMs = unblockTime - now;
+                    const remainingHours = Math.max(0, Math.floor(remainingMs / 3600000));
+                    const remainingMins = Math.max(0, Math.floor((remainingMs % 3600000) / 60000));
+                    
+                    div.innerHTML = `
+                        <p><strong>Usuario:</strong> ${user.username} (ID: ${user.id})</p>
+                        <p><strong>Ofensas:</strong> ${user.offense_count}</p>
+                        <p><strong>Tiempo restante:</strong> ${remainingHours}h ${remainingMins}m</p>
+                        <p><strong>Desbloqueo:</strong> ${unblockTime.toLocaleString()}</p>
+                    `;
+                    
+                    container.appendChild(div);
+                }
+            } catch (error) {
+                console.error("Error loading blocked users:", error);
+            }
+        }
+        
+        // Obtener estado del usuario
+        async function getUserStatus(commentId) {
+            try {
+                const response = await axios.get(`/api/v1/comments/${commentId}/user-status`);
+                return response.data;
+            } catch (error) {
+                console.error("Error getting user status:", error);
+                return null;
+            }
+        }
+        
+        // Cargar estadísticas
+        async function loadStats() {
+            try {
+                const response = await axios.get('/api/v1/comments/stats');
+                const stats = response.data;
+                
+                document.getElementById('non-toxic-count').textContent = stats.non_toxic;
+                document.getElementById('potentially-toxic-count').textContent = stats.potentially_toxic;
+                document.getElementById('toxic-count').textContent = stats.toxic;
+                
+                const ctx = document.getElementById('toxicityChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: ['No tóxicos', 'Potencialmente tóxicos', 'Tóxicos'],
+                        datasets: [{
+                            data: [stats.non_toxic, stats.potentially_toxic, stats.toxic],
+                            backgroundColor: ['#4caf50', '#ff9800', '#f44336']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error("Error loading stats:", error);
+            }
+        }
+        
+        // Cargar todo al inicio
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            loadRecentComments();
+            
+            // Actualizar cada 30 segundos
+            setInterval(() => {
+                if (document.getElementById('dashboard').style.display !== 'none') {
+                    loadStats();
+                    loadRecentComments();
+                }
+                if (document.getElementById('blocked-users').style.display !== 'none') {
+                    loadBlockedUsers();
+                }
+            }, 30000);
         });
-    }
-
-    // Cargar datos iniciales
-    loadComments();
-    loadStats();
-
-    // Actualizar cada 30 segundos
-    setInterval(() => {
-        loadComments();
-        loadStats();
-    }, 30000);
     </script>
 </body>
 </html>
-

@@ -107,6 +107,7 @@ async def process_comment_analysis(message: AbstractIncomingMessage):
                     analysis_result=analysis_result["analysis_result"]
                 )
                 db.add(analysis)
+                await db.commit() 
 
                 # ⚠️ Aumentar conteo de ofensas
                 if user and analysis_result["classification"] in ["toxic", "potentially-toxic"]:
@@ -135,14 +136,23 @@ async def process_comment_analysis(message: AbstractIncomingMessage):
 
                     # 🚫 Bloqueo automático por ofensas recientes
                     if len(recent_offenses) >= 1:  # Ya había una, esta sería la 2da
-                        unblock_time = analysis_time + timedelta(hours=1)
+                        block_duration = 3600  # 1 hora en segundos
+                        unblock_time = analysis_time + timedelta(seconds=block_duration)
+                        
                         user.is_blocked = True
                         user.blocked_until = unblock_time
                         db.add(user)
                         await db.commit()
-                        logger.info(f"Usuario {user.id} bloqueado automáticamente desde {analysis_time.isoformat()} hasta {unblock_time.isoformat()} por múltiples ofensas recientes")
+                        
+                        block_message = {
+                            "user_id": user.id,
+                            "block_duration": block_duration,
+                            "unblock_at": unblock_time.isoformat()
+                        }
+                        
+                        await publish_message(USER_BLOCK_QUEUE, json.dumps(block_message))
+                        logger.info(f"Usuario {user.id} bloqueado por 1 hora")
                         return
-
                     # 🚫 Bloqueo escalonado por acumulación total
                     if user.offense_count >= 3 and not user.is_blocked:
                         block_duration = 3600 * (user.offense_count - 1)

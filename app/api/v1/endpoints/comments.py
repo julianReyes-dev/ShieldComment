@@ -1,9 +1,9 @@
 from app.utils.queues import COMMENT_ANALYSIS_QUEUE
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from typing import List
 from datetime import datetime
 import json
@@ -62,9 +62,9 @@ async def get_recent_comments(db: AsyncSession = Depends(get_db)):
 async def get_toxicity_stats(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(
-            func.sum(func.case((CommentAnalysis.classification == "non-toxic", 1), else_=0)).label("non_toxic"),
-            func.sum(func.case((CommentAnalysis.classification == "potentially-toxic", 1), else_=0)).label("potentially_toxic"),
-            func.sum(func.case((CommentAnalysis.classification == "toxic", 1), else_=0)).label("toxic")
+            func.sum(case((CommentAnalysis.classification == "non-toxic", 1), else_=0)).label("non_toxic"),
+            func.sum(case((CommentAnalysis.classification == "potentially-toxic", 1), else_=0)).label("potentially_toxic"),
+            func.sum(case((CommentAnalysis.classification == "toxic", 1), else_=0)).label("toxic")
         )
     )
     
@@ -142,7 +142,11 @@ async def get_comment(comment_id: int, db: AsyncSession = Depends(get_db)):
     description="Retrieves toxicity analysis results for a comment"
 )
 async def get_comment_analysis(comment_id: int, db: AsyncSession = Depends(get_db)):
-    analysis = await db.get(CommentAnalysis, comment_id)
+    result = await db.execute(
+        select(CommentAnalysis).where(CommentAnalysis.comment_id == comment_id)
+    )
+    analysis = result.scalar_one_or_none()
+    
     if not analysis:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -176,4 +180,49 @@ async def get_user_status(comment_id: int, db: AsyncSession = Depends(get_db)):
         "is_blocked": user.is_blocked,
         "blocked_until": user.blocked_until,
         "offense_count": user.offense_count
+    }
+
+@router.get("/all", summary="Get all comments with pagination")
+async def get_all_comments(
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=100)
+):
+    # Contar total de comentarios
+    total_result = await db.execute(select(func.count(Comment.id)))
+    total = total_result.scalar()
+    
+    # Obtener comentarios paginados
+    offset = (page - 1) * per_page
+    result = await db.execute(
+        select(Comment, CommentAnalysis, User)
+        .join(CommentAnalysis, Comment.id == CommentAnalysis.comment_id)
+        .join(User, Comment.user_id == User.id)
+        .order_by(CommentAnalysis.analyzed_at.desc())
+        .offset(offset)
+        .limit(per_page)
+    )
+    
+    comments = []
+    for comment, analysis, user in result:
+        comments.append({
+            "id": comment.id,
+            "text": comment.text,
+            "created_at": comment.created_at,
+            "user": {
+                "id": user.id,
+                "username": user.username
+            },
+            "analysis": {
+                "toxicity_score": analysis.toxicity_score,
+                "classification": analysis.classification,
+                "analyzed_at": analysis.analyzed_at
+            }
+        })
+    
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "items": comments
     }

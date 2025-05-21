@@ -14,7 +14,8 @@ services:
     networks:
       - shieldnet
     volumes:
-      - ./app/templates:/app/templates 
+      - ./app/templates:/app/templates
+      - ./app/static:/app/static 
 
   db:
     image: postgres:13-alpine

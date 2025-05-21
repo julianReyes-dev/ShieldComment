@@ -16,6 +16,9 @@ RUN pip install torch --no-cache-dir
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Instalar dependencias para el frontend
+RUN pip install aiofiles jinja2
+
 COPY . .
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
